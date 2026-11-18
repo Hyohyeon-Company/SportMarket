@@ -1,0 +1,23 @@
+{
+  "name": "@sportmarket/shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Type-only view of the pinned SportMarket API contract (v1). No runtime code.",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

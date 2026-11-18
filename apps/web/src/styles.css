@@ -1,0 +1,164 @@
+/*
+ * S1 (홈 · 탐색) shell styles.
+ *
+ * Rule: every value that is not a layout decision comes from `tokens.css`
+ * (`var(--…)`). Literal colours, sizes, radii and shadows belong to that file
+ * only, which is why this sheet has none. tokens.css is a byte-identical copy
+ * of the team design system's v0.2.1 tokens — do not edit it here.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--step-body);
+  font-weight: var(--weight-body);
+  line-height: var(--lead-body);
+  word-break: keep-all;
+}
+
+.page {
+  max-width: var(--w-container);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+  padding-block-end: var(--section);
+}
+
+/* app-bar (DESIGN §9): brand + optional note, hairline below. */
+.appbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-4);
+  padding-block: var(--sp-4);
+  border-bottom: var(--bw) solid var(--border);
+}
+
+.brand {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-h3);
+  font-weight: var(--weight-strong);
+  letter-spacing: var(--track-small);
+}
+
+.brand-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--step-small);
+  line-height: var(--lead-small);
+}
+
+.title {
+  margin: var(--sp-6) 0 var(--sp-3);
+  font-family: var(--font-display);
+  font-size: var(--step-h2);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--track-h2);
+  line-height: var(--lead-h2);
+}
+
+/* filter-bar chips: presentational in the shell, so they are spans, not
+   controls that would accept a click and do nothing. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-min);
+  padding-inline: var(--sp-3);
+  border: var(--bw) solid var(--border);
+  border-radius: var(--r-full);
+  color: var(--text-muted);
+  font-size: var(--step-small);
+  line-height: var(--lead-small);
+}
+
+.chip--active {
+  border-color: var(--border-strong);
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* S1 in-body sell entry point: present at every width (handoff §6, F7). */
+.sell-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-block: var(--sp-6);
+  padding: var(--sp-4);
+  border: var(--bw) solid var(--border);
+  border-radius: var(--r-element);
+  background: var(--surface);
+}
+
+.sell-copy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--step-small);
+  line-height: var(--lead-small);
+}
+
+.btn {
+  min-height: var(--tap);
+  padding-inline: var(--sp-5);
+  border: var(--bw) solid transparent;
+  border-radius: var(--r-inner);
+  font-family: var(--font-body);
+  font-size: var(--step-body);
+  font-weight: var(--weight-strong);
+}
+
+.btn--sell {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.btn--sell:disabled {
+  border-color: var(--border);
+  background: var(--sunken);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+.btn:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.list {
+  border-top: var(--bw) solid var(--border);
+}
+
+.empty {
+  margin: var(--sp-8) 0 0;
+  padding: var(--sp-8) var(--sp-4);
+  border-radius: var(--r-element);
+  background: var(--sunken);
+  color: var(--text-muted);
+  font-size: var(--step-small);
+  line-height: var(--lead-small);
+  text-align: center;
+}
+
+/* 360px rule from the handoff: the sell row stacks instead of squeezing. */
+@media (max-width: 719px) {
+  .sell-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

@@ -32,3 +32,54 @@ image that only works when the build context happens to be world-readable. The g
 condition explicit, so the defect fails in CI instead of on the target host. When a project adds a
 database, extend its health URL to a query that proves the data layer answered, not just the
 process.
+
+## Stack decisions (scaffold v1)
+
+Framework and tool choices for the initial scaffold. Versions are the declared
+ranges in each `package.json`; the first `pnpm install` card commits
+`pnpm-lock.yaml` and records the exact resolved versions here.
+
+| Area | Choice | Why |
+| --- | --- | --- |
+| Runtime/tooling | Node.js 24 LTS, pnpm 12.18.0 (`packageManager`), TypeScript 5.9 | fixed by team policy; one compiler version across the monorepo |
+| API | NestJS 11 on the Express platform, CommonJS output | role default; decorator/DI model fits the module boundaries the domain cards need |
+| Web | React 19 + Vite 7 (`@vitejs/plugin-react` 5) | static SPA for the approved screens; no SSR requirement in scope |
+| Unit tests | Vitest 3 for `apps/api` and `apps/web` | one runner for both packages, no ts-jest/Babel duplication. Nest providers are plain TypeScript, and the web shell is asserted through `react-dom/server`, so no DOM emulator is required |
+| Lint | ESLint 9 flat config at the repository root, `typescript-eslint` 8 | one configuration for `apps/*` and `packages/*`; each package runs `eslint .` and resolves the root config by walking up |
+| Shared types | `@sportmarket/shared`, declarations only | mirrors the pinned API contract; the build emits `.d.ts` only, so the package cannot accidentally ship runtime behaviour |
+
+### Root scripts
+
+`lint`, `typecheck` and `build` fan out with `pnpm -r run`. `test:unit` is scoped
+to the two applications with `--filter`, because `packages/shared` is type-only
+and has no runnable unit under test. No script uses `--if-present`, and no script
+returns success unconditionally: every package script it invokes exists and runs
+a real tool.
+
+### Design tokens
+
+`apps/web/src/tokens.css` is a byte-identical copy of the team design system
+`tokens.css` v0.2.1
+(sha256 `cccc92d99c36ffade59ee0c639ba5a654e0eda1d51c278de5ab124c15217fea9`), as the
+design handoff directs. Change token values only in the design system and
+re-copy; do not edit the copy in place. `apps/web/src/styles.css` references
+`var(--…)` only and contains no literal colour, size, radius or shadow.
+
+### Known gaps in this scaffold
+
+Deliberate, and owned by later cards rather than this one:
+
+- No `pnpm-lock.yaml` yet. The first install card commits it; until then
+  `node .team/run-ci.mjs --validate` fails on the missing lockfile, and the
+  dependency ranges above are unverified by an actual resolution.
+- `.team/ci.json` declares eight checks. Only `lint`, `typecheck`, `test:unit`
+  and `build` have real scripts here; `test:integration`, `test:e2e`,
+  `test:security` and `test:operations` (the container gate) arrive with the
+  cards that create their subjects. Until every check exists the CI contract
+  cannot validate, and `.github/workflows/ci.yml.example` stays inactive.
+- `packages/shared` has no consumer yet; wiring it into the first real API call
+  belongs to that card.
+- `apps/api` has no database connection, migration, authentication or `/media`
+  route, and `apps/web` performs no data fetching. Both are feature-card scope.
+- No CI ran: the workflow file is an inactive example and this repository has no
+  runner bound.

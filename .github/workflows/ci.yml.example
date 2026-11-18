@@ -1,0 +1,39 @@
+# INACTIVE: configure isolated VM provisioning/admission before activation.
+# A runner label or this if-condition does NOT isolate PR-controlled code.
+# Resolve the action SHA after verifying the upstream release. See ci-cd.md
+# in the private control workspace. No production runner/credential belongs here.
+name: Team CI
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: team-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  ci:
+    name: team-ci
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.draft == false)
+    runs-on: [self-hosted, linux, x64, team-ci-disposable]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@REPLACE_WITH_VERIFIED_FULL_COMMIT_SHA
+        with:
+          persist-credentials: false
+      # The reviewed disposable VM image supplies pinned Node 24 and pnpm.
+      - name: Validate required checks and pins
+        run: node .team/run-ci.mjs --validate
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Execute common checks
+        run: node .team/run-ci.mjs
+# main success must be connected to a separately trusted build/publish/deploy
+# service on the server, with same-SHA image provenance and health verification.
+# This starter intentionally contains no speculative production endpoint.
