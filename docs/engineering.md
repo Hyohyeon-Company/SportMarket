@@ -83,3 +83,35 @@ Deliberate, and owned by later cards rather than this one:
   route, and `apps/web` performs no data fetching. Both are feature-card scope.
 - No CI ran: the workflow file is an inactive example and this repository has no
   runner bound.
+
+## Auth decisions (F-01 implementation card)
+
+F-01 (`/auth/*`) is the first behaviour-bearing feature in `apps/api`. These are
+the reversible technical choices the contract forced, recorded so the next card
+does not have to rediscover them. Each is a specialist decision, not an approved
+business rule change.
+
+| Area | Choice | Why |
+| --- | --- | --- |
+| Layer split | `apps/api/src/auth/{domain,application,ports,adapters,presentation}` | the auth rules (suspension, single-use tokens, session validity) stay usable without NestJS, and the MySQL card swaps an adapter instead of a rule |
+| Password hashing | `node:crypto` scrypt, per-password salt, parameters embedded in the stored value | no hashing dependency may be installed in this card, and scrypt is a memory-hard KDF suitable for credentials. `maxmem` is raised because the default limit sits at the edge for `N=16384, r=8` |
+| Session and token storage | SHA-256 digests of opaque random values; the plaintext lives only in the cookie or the mailed link | a database read cannot be replayed as a session or used to reset a password |
+| Request validation | hand-written parsers in `auth/dto` returning the contract's `details.fields[]` | the scaffold has no `class-validator`; the pinned schema is the source of truth, and one parser reports every invalid field at once |
+| CSRF | readable `sm_csrf` cookie + required `X-CSRF-Token` header, compared against the session's digest | the contract's `Session` body is `additionalProperties: false`, so the token cannot ride in the response body; the cookie name is not in the contract and is flagged OPEN |
+| Errors | `ApiError` in `src/common` plus one global `ApiExceptionFilter` | every route answers with the single `{code, message, details?}` envelope, including framework 404/400s |
+| API prefix | `app.setGlobalPrefix("api/v1")`, `GET /health` excluded | the contract's `servers` entry is `/api/v1`; the liveness probe is operational rather than contractual, so its path stays stable |
+| Shared types | `apps/api` declares the contract types it needs locally for now | `@sportmarket/shared` points `types` at `dist/index.d.ts`, which does not exist until `pnpm build`, while the CI contract runs `typecheck` before `build`; importing it now would fail typecheck. Wiring it belongs to the card that also settles that build order |
+
+Depth of this implementation: `apps/api/src/auth` (domain, application, ports,
+in-memory adapters, DTO parsers, guards, controller) and `apps/api/src/common`
+(envelope, error mapping, filter).
+
+Deliberately absent, as the card scopes them out: MySQL repositories and
+migrations, a real mail transport, and a rate-limit store shared between
+processes. The in-memory adapters therefore lose accounts and sessions on
+restart, and the fixed-window limiter counts per process.
+
+Thresholds the contract does not fix — session lifetime, the verification-token
+window, rate limits other than login's 5/minute, and the CSRF cookie name — are
+constants in `auth/domain/auth-policy.ts` marked `OPEN` with their reasoning, and
+are reported back to Leader rather than presented as approved policy.
