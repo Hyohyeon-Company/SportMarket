@@ -37,6 +37,13 @@ export interface OneTimeTokenRepository {
 export interface PasswordHasher {
   hash(plaintext: string): Promise<PasswordHash>;
   verify(plaintext: string, hash: PasswordHash): Promise<boolean>;
+  /**
+   * A digest of a value nobody can supply, verified against when no account
+   * matches the presented address. It spends the same work a real check would, so
+   * response time does not reveal whether the address is registered (login
+   * enumeration). Hashers that cannot answer it cheaply still must not throw.
+   */
+  timingDecoyHash(): Promise<PasswordHash>;
 }
 
 /**

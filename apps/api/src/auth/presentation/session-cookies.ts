@@ -86,6 +86,15 @@ export function serialiseCookieHeaders(specs: CookieSpec[]): string[] {
 }
 
 /**
+ * The two expiry lines, shared by the controller (logout, stale anonymous cookie)
+ * and the session guard (a presented cookie that no longer authenticates), so a
+ * 401 always clears the stale cookie in the same shape.
+ */
+export function clearSessionCookieHeaders(secure: boolean): string[] {
+  return serialiseCookieHeaders(clearedCookieSpecs({ secure }));
+}
+
+/**
  * Reads one cookie from the raw `Cookie` header.
  *
  * Parsed by hand instead of adding `cookie-parser`: the header format is a simple

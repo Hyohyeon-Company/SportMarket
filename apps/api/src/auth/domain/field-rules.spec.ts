@@ -31,9 +31,12 @@ describe("field validation", () => {
 
   it("requires a nickname of 2..20 characters that is not blanks", () => {
     expect(nicknameFieldIssues("가")[0]?.code).toBe("min_length");
-    expect(nicknameFieldIssues("  ")[0]?.code).toBe("pattern");
+    // Whitespace-only input is caught by the trimmed length check first, which is
+    // why the nickname rule needs no separate "not blanks" pattern branch.
+    expect(nicknameFieldIssues("  ")[0]?.code).toBe("min_length");
     expect(nicknameFieldIssues("가".repeat(21))[0]?.code).toBe("max_length");
     expect(nicknameFieldIssues("판매왕")).toEqual([]);
+    expect(nicknameFieldIssues("판 매 왕")).toEqual([]);
   });
 
   it("requires all three region fields and no extra ones (AC-02-3: no coordinates)", () => {

@@ -97,7 +97,7 @@ business rule change.
 | Password hashing | `node:crypto` scrypt, per-password salt, parameters embedded in the stored value | no hashing dependency may be installed in this card, and scrypt is a memory-hard KDF suitable for credentials. `maxmem` is raised because the default limit sits at the edge for `N=16384, r=8` |
 | Session and token storage | SHA-256 digests of opaque random values; the plaintext lives only in the cookie or the mailed link | a database read cannot be replayed as a session or used to reset a password |
 | Request validation | hand-written parsers in `auth/dto` returning the contract's `details.fields[]` | the scaffold has no `class-validator`; the pinned schema is the source of truth, and one parser reports every invalid field at once |
-| CSRF | readable `sm_csrf` cookie + required `X-CSRF-Token` header, compared against the session's digest | the contract's `Session` body is `additionalProperties: false`, so the token cannot ride in the response body; the cookie name is not in the contract and is flagged OPEN |
+| CSRF | readable `sm_csrf` cookie + required `X-CSRF-Token` header holding the same value (double submit), compared against the session's digest | the contract's `Session` body is `additionalProperties: false`, so the token cannot ride in the response body. Leader decision D-1 fixes the cookie name, attributes and the `CSRF_TOKEN_MISSING` / `CSRF_TOKEN_INVALID` split; recorded in `docs/api-spec-addendum-v1.1.md` |
 | Errors | `ApiError` in `src/common` plus one global `ApiExceptionFilter` | every route answers with the single `{code, message, details?}` envelope, including framework 404/400s |
 | API prefix | `app.setGlobalPrefix("api/v1")`, `GET /health` excluded | the contract's `servers` entry is `/api/v1`; the liveness probe is operational rather than contractual, so its path stays stable |
 | Shared types | `apps/api` declares the contract types it needs locally for now | `@sportmarket/shared` points `types` at `dist/index.d.ts`, which does not exist until `pnpm build`, while the CI contract runs `typecheck` before `build`; importing it now would fail typecheck. Wiring it belongs to the card that also settles that build order |
@@ -111,7 +111,18 @@ migrations, a real mail transport, and a rate-limit store shared between
 processes. The in-memory adapters therefore lose accounts and sessions on
 restart, and the fixed-window limiter counts per process.
 
-Thresholds the contract does not fix — session lifetime, the verification-token
-window, rate limits other than login's 5/minute, and the CSRF cookie name — are
-constants in `auth/domain/auth-policy.ts` marked `OPEN` with their reasoning, and
-are reported back to Leader rather than presented as approved policy.
+Thresholds the pinned contract leaves open — the CSRF carrier (D-1), session
+lifetime (D-2), the verification-token window (D-3) and the non-login `429`
+limits (D-4) — were decided by Leader on 2026-11-22
+(`artifacts/decisions/secondhand-market/f01-auth-contract-decisions-v1.md`) and
+are recorded as a contract extension in `docs/api-spec-addendum-v1.1.md`. They are
+constants in `auth/domain/auth-policy.ts` citing the decision, not implementation
+defaults, and the pinned `api-spec-v1` itself is unchanged.
+
+Known limits of this implementation, left for later cards on purpose:
+`agreements.marketing` is validated and then dropped — the consent record (value,
+timestamp, terms version) is a follow-up card, so nothing can read consent state
+yet; per-source rate-limit keys use the address Express reports, so a deployment
+behind a proxy must configure `trust proxy` before those limits mean what they
+say; and the in-memory limiter counts per process, so multiple instances each get
+their own window.

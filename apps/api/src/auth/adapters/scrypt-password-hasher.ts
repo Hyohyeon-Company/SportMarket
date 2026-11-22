@@ -28,15 +28,28 @@ const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SALT_BYTES = 16;
 const DIGEST_BYTES = 64;
+const DECOY_BYTES = 32;
 const STORED_PREFIX = "scrypt";
 
 export class ScryptPasswordHasher implements PasswordHasher {
+  private decoy: Promise<PasswordHash> | null = null;
+
   async hash(plaintext: string): Promise<PasswordHash> {
     const salt = randomBytes(SALT_BYTES);
     const digest = await this.derive(plaintext, salt, SCRYPT_N, SCRYPT_R, SCRYPT_P, DIGEST_BYTES);
     return PasswordHash.fromStorage(
       [STORED_PREFIX, SCRYPT_N, SCRYPT_R, SCRYPT_P, encode(salt), encode(digest)].join("$"),
     );
+  }
+
+  /**
+   * Hashed once from a random value nobody can supply, so verification always
+   * fails but still pays the kdf cost. That is what keeps "unknown address" and
+   * "wrong password" at the same response time.
+   */
+  timingDecoyHash(): Promise<PasswordHash> {
+    this.decoy ??= this.hash(randomBytes(DECOY_BYTES).toString("base64url"));
+    return this.decoy;
   }
 
   async verify(plaintext: string, hash: PasswordHash): Promise<boolean> {

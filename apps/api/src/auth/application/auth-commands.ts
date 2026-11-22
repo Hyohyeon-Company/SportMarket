@@ -33,3 +33,14 @@ export interface PasswordResetConfirmInput {
 export interface EmailVerificationConfirmInput {
   token: string;
 }
+
+/**
+ * Where the request came from, for policies that count attempts per caller.
+ * Only the transport layer can supply it; a non-HTTP caller (a job, a test) gets
+ * the single shared bucket, which is honest because it has no client address.
+ */
+export interface RequestOrigin {
+  clientIp: string;
+}
+
+export const UNSPECIFIED_ORIGIN: RequestOrigin = { clientIp: "unattributed" };

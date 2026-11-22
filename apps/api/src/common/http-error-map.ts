@@ -15,6 +15,7 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   UNAUTHENTICATED: 401,
   INVALID_CREDENTIALS: 401,
   CSRF_TOKEN_INVALID: 403,
+  CSRF_TOKEN_MISSING: 403,
   ACCOUNT_SUSPENDED: 403,
   EMAIL_ALREADY_REGISTERED: 409,
   RATE_LIMITED: 429,
@@ -65,6 +66,8 @@ export function fallbackMessageFor(code: ApiErrorCode): string {
       return API_MESSAGES.unauthenticated;
     case "CSRF_TOKEN_INVALID":
       return API_MESSAGES.csrfRejected;
+    case "CSRF_TOKEN_MISSING":
+      return API_MESSAGES.csrfMissing;
     case "INVALID_CREDENTIALS":
       return API_MESSAGES.invalidCredentials;
     case "RATE_LIMITED":

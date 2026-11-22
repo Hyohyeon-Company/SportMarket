@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res, UseGuards } from "@nestjs/common";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 
 import {
   parseEmailVerificationConfirmBody,
@@ -9,12 +9,13 @@ import {
   parseSignupBody,
 } from "../dto/auth-request-parsers";
 import { AuthService, type AuthenticatedCaller } from "../application/auth.service";
+import { UNSPECIFIED_ORIGIN, type RequestOrigin } from "../application/auth-commands";
 import { AUTH_POLICY } from "../domain/auth-policy";
 import { CurrentCaller } from "./current-caller.decorator";
 import { CsrfGuard, SessionGuard, type AuthenticatedRequest } from "./auth.guards";
 import { toAcceptedBody, toSessionBody, type AcceptedBody, type SessionBody } from "./auth-responses";
 import {
-  clearedCookieSpecs,
+  clearSessionCookieHeaders,
   cookiesSecureFromEnv,
   headerValue,
   readCookie,
@@ -36,18 +37,26 @@ export class AuthController {
   /** AC-01-1: 201 with a session cookie; the body carries no token. */
   @Post("signup")
   @HttpCode(HttpStatus.CREATED)
-  async signup(@Body() body: unknown, @Res({ passthrough: true }) response: Response): Promise<SessionBody> {
+  async signup(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<SessionBody> {
     const command = parseSignupBody(body);
-    const result = await this.auth.signup(command);
+    const result = await this.auth.signup(command, originOf(request));
     this.setSessionCookies(response, result.issued);
     return toSessionBody(result.snapshot);
   }
 
   @Post("login")
   @HttpCode(HttpStatus.OK)
-  async login(@Body() body: unknown, @Res({ passthrough: true }) response: Response): Promise<SessionBody> {
+  async login(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<SessionBody> {
     const command = parseLoginBody(body);
-    const result = await this.auth.login(command);
+    const result = await this.auth.login(command, originOf(request));
     this.setSessionCookies(response, result.issued);
     return toSessionBody(result.snapshot);
   }
@@ -81,8 +90,8 @@ export class AuthController {
   /** Always 202, so the endpoint cannot be used to discover registered emails. */
   @Post("password-reset")
   @HttpCode(HttpStatus.ACCEPTED)
-  async requestPasswordReset(@Body() body: unknown): Promise<AcceptedBody> {
-    await this.auth.requestPasswordReset(parsePasswordResetRequestBody(body));
+  async requestPasswordReset(@Body() body: unknown, @Req() request: Request): Promise<AcceptedBody> {
+    await this.auth.requestPasswordReset(parsePasswordResetRequestBody(body), originOf(request));
     return toAcceptedBody();
   }
 
@@ -118,6 +127,16 @@ export class AuthController {
   }
 
   private clearSessionCookies(response: Response): void {
-    response.setHeader("Set-Cookie", serialiseCookieHeaders(clearedCookieSpecs({ secure: cookiesSecureFromEnv() })));
+    response.setHeader("Set-Cookie", clearSessionCookieHeaders(cookiesSecureFromEnv()));
   }
+}
+
+/**
+ * Rate-limit keys need the caller's address. Express fills `ip` from the socket
+ * unless `trust proxy` is enabled; behind a proxy every request would share the
+ * proxy address until that is configured, which is an operations concern recorded
+ * in `docs/api-spec-addendum-v1.1.md` rather than a rule invented here.
+ */
+function originOf(request: Request): RequestOrigin {
+  return { clientIp: request.ip ?? UNSPECIFIED_ORIGIN.clientIp };
 }

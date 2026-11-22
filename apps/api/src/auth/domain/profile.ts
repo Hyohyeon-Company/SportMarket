@@ -28,9 +28,8 @@ export function nicknameFieldIssues(value: unknown, path = "nickname"): FieldIss
   if (value.length > NICKNAME_MAX_LENGTH) {
     return [{ path, code: "max_length", message: "닉네임은 20자 이내로 입력해 주세요." }];
   }
-  if (!/\S/.test(value)) {
-    return [{ path, code: "pattern", message: "닉네임에 공백이 아닌 문자를 포함해 주세요." }];
-  }
+  // No separate "not blanks" branch: the trimmed-length check above already
+  // refuses a value that is only whitespace.
   return [];
 }
 

@@ -17,14 +17,28 @@ import type { UserAccount } from "../domain/user-account";
 
 const START = new Date("2026-11-20T00:00:00.000Z");
 const ADDRESS = "buyer@example.com";
+const ORIGIN = { clientIp: "203.0.113.7" };
+const OTHER_ORIGIN = { clientIp: "203.0.113.99" };
 
 class FakePasswordHasher implements PasswordHasher {
+  verifyCalls = 0;
+  decoyVerifications = 0;
+  private readonly decoy = PasswordHash.fromStorage("fake$decoy-nobody-supplies-this");
+
   async hash(plaintext: string): Promise<PasswordHash> {
     return PasswordHash.fromStorage(`fake$${plaintext}`);
   }
 
   async verify(plaintext: string, hash: PasswordHash): Promise<boolean> {
+    this.verifyCalls += 1;
+    if (hash.value === this.decoy.value) {
+      this.decoyVerifications += 1;
+    }
     return hash.value === `fake$${plaintext}`;
+  }
+
+  async timingDecoyHash(): Promise<PasswordHash> {
+    return this.decoy;
   }
 }
 
@@ -35,9 +49,10 @@ interface Harness {
   tokens: InMemoryOneTimeTokenRepository;
   mailer: InMemoryAuthMailer;
   clock: FixedClock;
+  hasher: FakePasswordHasher;
 }
 
-function harness(): Harness {
+function harness(hasher: FakePasswordHasher = new FakePasswordHasher()): Harness {
   const users = new InMemoryUserRepository();
   const sessions = new InMemorySessionRepository();
   const tokens = new InMemoryOneTimeTokenRepository();
@@ -47,13 +62,13 @@ function harness(): Harness {
     users,
     sessions,
     tokens,
-    hasher: new FakePasswordHasher(),
+    hasher,
     tokenGenerator: new CryptoTokenGenerator(),
     clock,
     rateLimiter: new InMemoryRateLimiter(),
     mailer,
   };
-  return { service: new AuthService(deps), users, sessions, tokens, mailer, clock };
+  return { service: new AuthService(deps), users, sessions, tokens, mailer, clock, hasher };
 }
 
 function signupInput(overrides: { email?: string; password?: string } = {}) {
@@ -153,6 +168,18 @@ describe("login (AC-01-5) and suspension", () => {
     expect(wrongPassword.message).toBe(unknownEmail.message);
   });
 
+  it("spends a hash comparison for an unknown address so timing does not reveal registration", async () => {
+    const { service, hasher } = harness();
+
+    const unknownEmail = await errorFrom(() =>
+      service.login({ email: Email.parse("nobody@example.com"), password: "password123" }, ORIGIN),
+    );
+
+    expect(unknownEmail.code).toBe("INVALID_CREDENTIALS");
+    expect(hasher.verifyCalls).toBe(1);
+    expect(hasher.decoyVerifications).toBe(1);
+  });
+
   it("rate-limits a single account to five attempts per minute and reports Retry-After", async () => {
     const { service, clock } = harness();
     await service.signup(signupInput());
@@ -167,7 +194,7 @@ describe("login (AC-01-5) and suspension", () => {
     expect(typeof limited.details?.retryAfterSeconds).toBe("number");
     expect(limited.details?.retryAfterSeconds as number).toBeGreaterThanOrEqual(1);
 
-    clock.advanceSeconds(AUTH_POLICY.loginRateLimit.windowSeconds);
+    clock.advanceSeconds(AUTH_POLICY.rateLimits.login.windowSeconds);
     const afterWindow = await service.login({ email: Email.parse(ADDRESS), password: "password123" });
     expect(afterWindow.snapshot.user?.email.value).toBe(ADDRESS);
   });
@@ -244,27 +271,44 @@ describe("session and logout (AC-01-4)", () => {
 });
 
 describe("CSRF", () => {
-  it("accepts the token bound to the session and refuses anything else", async () => {
+  it("accepts only a header that echoes the readable cookie and matches the session", async () => {
     const { service } = harness();
     const signedUp = await service.signup(signupInput());
     const caller = await service.resolveCaller(signedUp.issued.sessionToken);
+    const token = signedUp.issued.csrfToken;
 
     expect(() => {
-      service.assertCsrfToken(caller, signedUp.issued.csrfToken);
+      service.assertCsrfToken(caller, token, token);
     }).not.toThrow();
 
-    const missing = await errorFrom(async () => {
-      service.assertCsrfToken(caller, undefined);
-    });
-    const wrong = await errorFrom(async () => {
-      service.assertCsrfToken(caller, "x".repeat(32));
-    });
-    const tooShort = await errorFrom(async () => {
-      service.assertCsrfToken(caller, "short");
-    });
+    const cases: Array<{ header: string | undefined; cookie: string | null; code: string }> = [
+      { header: undefined, cookie: token, code: "CSRF_TOKEN_MISSING" },
+      { header: token, cookie: null, code: "CSRF_TOKEN_MISSING" },
+      { header: "", cookie: "", code: "CSRF_TOKEN_MISSING" },
+      { header: token, cookie: "x".repeat(32), code: "CSRF_TOKEN_INVALID" },
+      { header: "x".repeat(32), cookie: "x".repeat(32), code: "CSRF_TOKEN_INVALID" },
+      { header: "short", cookie: "short", code: "CSRF_TOKEN_INVALID" },
+    ];
 
-    expect([missing.code, wrong.code, tooShort.code]).toEqual(["CSRF_TOKEN_INVALID", "CSRF_TOKEN_INVALID", "CSRF_TOKEN_INVALID"]);
-    expect(missing.message).toBe("요청을 확인할 수 없습니다. 페이지를 새로 고친 뒤 다시 시도해 주세요.");
+    for (const testCase of cases) {
+      const error = await errorFrom(async () => {
+        service.assertCsrfToken(caller, testCase.header, testCase.cookie);
+      });
+      expect({ header: testCase.header, cookie: testCase.cookie, code: error.code }).toEqual({
+        header: testCase.header,
+        cookie: testCase.cookie,
+        code: testCase.code,
+      });
+    }
+
+    const missing = await errorFrom(async () => {
+      service.assertCsrfToken(caller, undefined, token);
+    });
+    expect(missing.message).toBe("요청 확인 토큰이 없습니다. 페이지를 새로 고친 뒤 다시 시도해 주세요.");
+    const mismatched = await errorFrom(async () => {
+      service.assertCsrfToken(caller, token, "x".repeat(32));
+    });
+    expect(mismatched.message).toBe("요청을 확인할 수 없습니다. 페이지를 새로 고친 뒤 다시 시도해 주세요.");
   });
 });
 
@@ -359,13 +403,77 @@ describe("email verification resend", () => {
   });
 
   it("does nothing for an already verified account", async () => {
-    const { service, mailer } = harness();
-    const signedUp = await service.signup(signupInput());
+    const { service, mailer, users } = harness();
+    await service.signup(signupInput());
     await service.confirmEmailVerification({ token: mailer.lastTokenFor(ADDRESS) ?? "" });
     const before = mailer.messages().length;
 
-    await service.resendEmailVerification(requireUser(signedUp.snapshot));
+    // The endpoint reloads the account on every request (SessionGuard), so the test
+    // must hand it the stored account too: the signup snapshot still says
+    // "unverified" and would make the resend send a second mail.
+    const verified = await users.findByEmail(Email.parse(ADDRESS));
+    if (verified === null) {
+      throw new Error("expected the stored account");
+    }
+    await service.resendEmailVerification(verified);
 
     expect(mailer.messages().length).toBe(before);
+  });
+});
+
+describe("rate limits per Leader decision D-4", () => {
+  it("limits signups to five per minute per client address without locking out another address", async () => {
+    const { service } = harness();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await service.signup(signupInput({ email: `buyer${attempt}@example.com` }), ORIGIN);
+    }
+
+    const limited = await errorFrom(() => service.signup(signupInput({ email: "buyer5@example.com" }), ORIGIN));
+    expect(limited.code).toBe("RATE_LIMITED");
+    expect(limited.details?.retryAfterSeconds as number).toBeGreaterThanOrEqual(1);
+
+    await expect(service.signup(signupInput({ email: "buyer5@example.com" }), OTHER_ORIGIN)).resolves.toBeDefined();
+  });
+
+  it("limits password-reset to three per minute per address", async () => {
+    const { service } = harness();
+    const address = Email.parse("nobody@example.com");
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(service.requestPasswordReset({ email: address }, ORIGIN)).resolves.toBeUndefined();
+    }
+
+    const limited = await errorFrom(() => service.requestPasswordReset({ email: address }, ORIGIN));
+    expect(limited.code).toBe("RATE_LIMITED");
+  });
+
+  it("limits password-reset to ten per minute per source across distinct addresses", async () => {
+    const { service } = harness();
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await expect(
+        service.requestPasswordReset({ email: Email.parse(`nobody${attempt}@example.com`) }, ORIGIN),
+      ).resolves.toBeUndefined();
+    }
+
+    const limited = await errorFrom(() => service.requestPasswordReset({ email: Email.parse("nobody10@example.com") }, ORIGIN));
+    expect(limited.code).toBe("RATE_LIMITED");
+  });
+
+  it("limits verification resends to three per minute per address", async () => {
+    const { service, users } = harness();
+    await service.signup(signupInput());
+    const stored = await users.findByEmail(Email.parse(ADDRESS));
+    if (stored === null) {
+      throw new Error("expected the stored account");
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(service.resendEmailVerification(stored)).resolves.toBeUndefined();
+    }
+
+    const limited = await errorFrom(() => service.resendEmailVerification(stored));
+    expect(limited.code).toBe("RATE_LIMITED");
   });
 });

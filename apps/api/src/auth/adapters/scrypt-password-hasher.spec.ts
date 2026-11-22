@@ -34,4 +34,13 @@ describe("ScryptPasswordHasher", () => {
     await expect(hasher.verify("password123", PasswordHash.fromStorage("plaintext"))).resolves.toBe(false);
     await expect(hasher.verify("password123", PasswordHash.fromStorage("scrypt$x$8$1$aaaa$bbbb"))).resolves.toBe(false);
   });
+
+  it("offers one decoy digest that never verifies, so an unknown address pays the same cost", async () => {
+    const decoy = await hasher.timingDecoyHash();
+
+    expect(decoy.value.startsWith("scrypt$16384$8$1$")).toBe(true);
+    await expect(hasher.verify("password123", decoy)).resolves.toBe(false);
+    await expect(hasher.verify("", decoy)).resolves.toBe(false);
+    expect(await hasher.timingDecoyHash()).toBe(decoy);
+  });
 });

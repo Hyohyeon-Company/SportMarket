@@ -7,8 +7,10 @@ import type {
   EmailVerificationConfirmInput,
   PasswordResetConfirmInput,
   PasswordResetRequestInput,
+  RequestOrigin,
   SignupCommandInput,
 } from "./auth-commands";
+import { UNSPECIFIED_ORIGIN } from "./auth-commands";
 import { AUTH_DEPENDENCIES } from "../auth.tokens";
 import { ApiError } from "../../common/api-error";
 import { API_MESSAGES } from "../../common/api-messages";
@@ -80,10 +82,10 @@ export class AuthService {
   constructor(@Inject(AUTH_DEPENDENCIES) private readonly deps: AuthServiceDeps) {}
 
   /** AC-01-1: signup signs the account in immediately (201 + session cookie). */
-  async signup(input: SignupCommandInput): Promise<StartedSession> {
+  async signup(input: SignupCommandInput, origin: RequestOrigin = UNSPECIFIED_ORIGIN): Promise<StartedSession> {
     const now = this.deps.clock.now();
-    const addressKey = `signup:${input.email.value}`;
-    this.assertWithinRateLimit(addressKey, now);
+    // D-4: a signup flood is a source problem, so the key is the client address.
+    this.assertWithinRateLimit(`signup:${origin.clientIp}`, now, AUTH_POLICY.rateLimits.signup);
 
     const existing = await this.deps.users.findByEmail(input.email);
     if (existing !== null) {
@@ -118,14 +120,23 @@ export class AuthService {
    * suspended account still yields the non-enumerating 401 instead of disclosing
    * the account state. Only a correct password reveals `ACCOUNT_SUSPENDED`.
    */
-  async login(input: LoginCommandInput): Promise<StartedSession> {
+  async login(input: LoginCommandInput, origin: RequestOrigin = UNSPECIFIED_ORIGIN): Promise<StartedSession> {
     const now = this.deps.clock.now();
-    const attemptKey = `login:${input.email.value}`;
-    this.assertWithinRateLimit(attemptKey, now);
+    // D-4: the threshold counts one address at one source, so a shared address on
+    // a shared network does not lock out unrelated callers and a single source
+    // cannot spray many addresses past the limit.
+    const attemptKey = `login:${input.email.value}|${origin.clientIp}`;
+    this.assertWithinRateLimit(attemptKey, now, AUTH_POLICY.rateLimits.login);
 
     const user = await this.deps.users.findByEmail(input.email);
-    const matches = user === null ? false : await this.deps.hasher.verify(input.password, user.passwordHash);
-    if (user === null || !matches) {
+    if (user === null) {
+      // Spend the same work as a real comparison so an unknown address cannot be
+      // distinguished by response time. The result is deliberately discarded.
+      await this.deps.hasher.verify(input.password, await this.deps.hasher.timingDecoyHash());
+      throw new ApiError("INVALID_CREDENTIALS", API_MESSAGES.invalidCredentials);
+    }
+    const matches = await this.deps.hasher.verify(input.password, user.passwordHash);
+    if (!matches) {
       throw new ApiError("INVALID_CREDENTIALS", API_MESSAGES.invalidCredentials);
     }
 
@@ -175,12 +186,21 @@ export class AuthService {
    * digest bound to this session, so a token from another session (or an absent
    * header) is refused with the contract's 403.
    */
-  assertCsrfToken(caller: AuthenticatedCaller, headerValue: string | undefined): void {
-    const value = headerValue?.trim() ?? "";
-    if (value.length < AUTH_POLICY.csrfTokenMinLength || value.length > AUTH_POLICY.csrfTokenMaxLength) {
+  assertCsrfToken(caller: AuthenticatedCaller, headerValue: string | undefined, cookieValue: string | null): void {
+    const presented = headerValue?.trim() ?? "";
+    const cookie = cookieValue?.trim() ?? "";
+    if (presented === "" || cookie === "") {
+      throw new ApiError("CSRF_TOKEN_MISSING", API_MESSAGES.csrfMissing);
+    }
+    if (presented.length < AUTH_POLICY.csrfTokenMinLength || presented.length > AUTH_POLICY.csrfTokenMaxLength) {
       throw new ApiError("CSRF_TOKEN_INVALID", API_MESSAGES.csrfRejected);
     }
-    if (!caller.session.matchesCsrfTokenHash(this.deps.tokenGenerator.hashOf(value))) {
+    // D-1 double submit: the header must echo the readable cookie, so a cross-site
+    // form post cannot supply the value even though the browser would send it.
+    if (presented !== cookie) {
+      throw new ApiError("CSRF_TOKEN_INVALID", API_MESSAGES.csrfRejected);
+    }
+    if (!caller.session.matchesCsrfTokenHash(this.deps.tokenGenerator.hashOf(presented))) {
       throw new ApiError("CSRF_TOKEN_INVALID", API_MESSAGES.csrfRejected);
     }
   }
@@ -189,9 +209,12 @@ export class AuthService {
    * AC-01-6 request step: always 202, whether or not the address has an account,
    * so the endpoint cannot be used to enumerate registered emails (S10 wording).
    */
-  async requestPasswordReset(input: PasswordResetRequestInput): Promise<void> {
+  async requestPasswordReset(input: PasswordResetRequestInput, origin: RequestOrigin = UNSPECIFIED_ORIGIN): Promise<void> {
     const now = this.deps.clock.now();
-    this.assertWithinRateLimit(`password-reset:${input.email.value}`, now);
+    // D-4: two limits, because a mail flood has two shapes — one inbox hammered
+    // repeatedly, and one source cycling through many addresses.
+    this.assertWithinRateLimit(`password-reset:${input.email.value}`, now, AUTH_POLICY.rateLimits.passwordResetPerEmail);
+    this.assertWithinRateLimit(`password-reset-ip:${origin.clientIp}`, now, AUTH_POLICY.rateLimits.passwordResetPerIp);
 
     const user = await this.deps.users.findByEmail(input.email);
     if (user === null || user.status === "deleted") {
@@ -229,7 +252,8 @@ export class AuthService {
   async resendEmailVerification(user: UserAccount): Promise<void> {
     user.assertCanChangeState();
     const now = this.deps.clock.now();
-    this.assertWithinRateLimit(`email-verification:${user.id}`, now);
+    // D-4: counted per normalized address, which is the inbox a flood would hit.
+    this.assertWithinRateLimit(`email-verification:${user.email.value}`, now, AUTH_POLICY.rateLimits.emailVerificationPerEmail);
     if (user.isEmailVerified()) {
       return;
     }
@@ -307,8 +331,7 @@ export class AuthService {
     }
   }
 
-  private assertWithinRateLimit(key: string, now: Date): void {
-    const policy = key.startsWith("login:") ? AUTH_POLICY.loginRateLimit : AUTH_POLICY.addressRateLimit;
+  private assertWithinRateLimit(key: string, now: Date, policy: { windowSeconds: number; maxAttempts: number }): void {
     const decision = this.deps.rateLimiter.consume(key, now, policy);
     if (!decision.allowed) {
       throw new ApiError("RATE_LIMITED", API_MESSAGES.rateLimited, {

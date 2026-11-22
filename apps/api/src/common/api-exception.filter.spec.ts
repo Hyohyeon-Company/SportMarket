@@ -56,6 +56,7 @@ describe("envelopeFor", () => {
     expect(envelopeFor(new ApiError("UNAUTHENTICATED", "x")).status).toBe(401);
     expect(envelopeFor(new ApiError("INVALID_CREDENTIALS", "x")).status).toBe(401);
     expect(envelopeFor(new ApiError("CSRF_TOKEN_INVALID", "x")).status).toBe(403);
+    expect(envelopeFor(new ApiError("CSRF_TOKEN_MISSING", "x")).status).toBe(403);
     expect(envelopeFor(new ApiError("EMAIL_ALREADY_REGISTERED", "x")).status).toBe(409);
     expect(envelopeFor(new ApiError("PASSWORD_RESET_TOKEN_INVALID", "x")).status).toBe(400);
     expect(envelopeFor(new ApiError("EMAIL_VERIFICATION_TOKEN_INVALID", "x")).status).toBe(400);
