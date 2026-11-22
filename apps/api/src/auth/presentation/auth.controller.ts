@@ -70,8 +70,9 @@ export class AuthController {
   async session(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: Response): Promise<SessionBody> {
     const token = readCookie(headerValue(request.headers.cookie), AUTH_POLICY.cookies.session);
     const snapshot = await this.auth.getSession(token);
-    if (snapshot.session === null) {
-      // A stale cookie is cleaned up rather than left to fail on every request.
+    if (snapshot.session === null && token !== null) {
+      // A stale cookie is cleaned up rather than left to fail on every request;
+      // an anonymous visitor who sent no cookie gets no Set-Cookie at all.
       this.clearSessionCookies(response);
     }
     return toSessionBody(snapshot);
